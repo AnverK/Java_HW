@@ -1,61 +1,62 @@
 package ru.ifmo.rain.khusainov.walk;
 
 import java.io.*;
-import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.Scanner;
 
 public class RecursiveWalk extends Walk {
-//    private static void getNextFile(Path path, FileWriter writer) throws IOException {
-//        File file = new File(path);
-//        if (!file.isDirectory()) {
-//            read_one_file(file.getPath(), writer);
-//        }
-//        if (file.list() == null) {
-//            return;
-//        }
-//        for (int i = 0; i < file.list().length; i++) {
-//            getNextFile(path + '/' + file.list()[i], writer);
-//        }
-//    }
 
-    public static class MyFileVisitor extends SimpleFileVisitor<Path> {
-        FileWriter writer;
+    private static class MyFileVisitor extends SimpleFileVisitor<Path> {
+        Writer writer;
 
-        MyFileVisitor(FileWriter w) {
+        MyFileVisitor(Writer w) {
             writer = w;
         }
 
         @Override
         public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-            read_one_file(file.toString(), writer);
+            readOneFile(file, writer);
             return FileVisitResult.CONTINUE;
         }
 
         @Override
         public FileVisitResult visitFileFailed(Path file, IOException exc) {
-            read_one_file(file.toString(), writer);
+            writeLine(0, file.toString(), writer);
             return FileVisitResult.CONTINUE;
         }
     }
 
     public static void main(String[] args) {
-        if (args.length != 2) {
-            System.out.println("Wrong number of arguments. Expected 2, got " + args.length);
+        if (!isCorrectArgs(args)) {
             return;
         }
+
+        if (!createDirectories(args[1])) {
+            return;
+        }
+
         try (
-                InputStream reader = new FileInputStream(args[0]);
-                FileWriter writer = new FileWriter(args[1])
+                BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(new FileInputStream(args[0]), StandardCharsets.UTF_8));
+                OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(args[1]), StandardCharsets.UTF_8)
         ) {
-            Scanner sc = new Scanner(reader, "UTF-8");
-            while (sc.hasNext()) {
-                String directory = sc.next();
-                Files.walkFileTree(Paths.get(directory), new MyFileVisitor(writer));
+            String directory;
+            while ((directory = reader.readLine()) != null) {
+                try {
+                    Files.walkFileTree(Paths.get(directory), new MyFileVisitor(writer));
+                } catch (IOException e) {
+                    System.out.println("File or directory: " + directory + " is not existed");
+                } catch (SecurityException e) {
+                    System.out.println("Access to file or directory: " + directory + " is denied");
+                } catch (InvalidPathException e) {
+                    writeLine(0, directory, writer);
+                }
             }
         } catch (IOException e) {
-            e.printStackTrace();
+            System.out.println("Input or output file is not existed");
+        } catch (SecurityException e) {
+            System.out.println("Access to input or output file is denied");
         }
     }
 }

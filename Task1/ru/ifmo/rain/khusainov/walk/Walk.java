@@ -1,9 +1,14 @@
 package ru.ifmo.rain.khusainov.walk;
 
 import java.io.*;
-import java.util.Scanner;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 public class Walk {
+    private static byte[] buf = new byte[1024];
 
     private static final class FNVHash {
         private static final int FNV_32_INIT = 0x811c9dc5;
@@ -14,57 +19,109 @@ public class Walk {
             res = FNV_32_INIT;
         }
 
-        int hash32(final byte[] k, final int end) {
+        void hash32(final byte[] k, final int end) {
             for (int i = 0; i < end; i++) {
                 res = (res * FNV_32_PRIME) ^ (k[i] & 0xff);
             }
+        }
+
+        void makeBadHash() {
+            res = 0;
+        }
+
+        int getHash() {
             return res;
         }
     }
 
-    private static void write_line(int hash, String name, FileWriter writer) throws IOException {
-        writer.write(String.format("%08x %s", hash, name));
-        writer.append(System.lineSeparator());
+    static void writeLine(int hash, String name, Writer writer) {
+        try {
+            writer.write(String.format("%08x %s%s", hash, name, System.lineSeparator()));
+        } catch (IOException e) {
+            System.out.println("Error of writing hash of file: " + name);
+        }
     }
 
-    static void read_one_file(String file_name, FileWriter writer) {
-        int hash = FNVHash.FNV_32_INIT;
-        try (InputStream hash_reader = new FileInputStream(file_name)) {
-            byte[] buf = new byte[1024];
-            int c = 0;
-            FNVHash fnv = new FNVHash();
-            while ((c = hash_reader.read(buf)) >= 0) {
-                hash = fnv.hash32(buf, c);
+    static void readOneFile(Path path, Writer writer) {
+        FNVHash fnv = new FNVHash();
+        try (InputStream hashReader = Files.newInputStream(path)) {
+            int c;
+            while ((c = hashReader.read(buf)) >= 0) {
+                fnv.hash32(buf, c);
             }
-        } catch (IOException e) {
-            hash = 0;
+        } catch (IOException | SecurityException e) {
+            fnv.makeBadHash();
         } finally {
+            writeLine(fnv.getHash(), path.toString(), writer);
+        }
+    }
+
+
+    static boolean isCorrectArgs(String[] args) {
+        if (args == null) {
+            System.out.println("null was received as pathes");
+            return false;
+        }
+        if (args.length != 2) {
+            System.out.println("Wrong number of arguments. Expected 2, got " + args.length);
+            return false;
+        }
+        if (args[0] == null) {
+            System.out.println("null was received as path to input file");
+            return false;
+        }
+        if (args[1] == null) {
+            System.out.println("null was received as path to output file");
+            return false;
+        }
+        return true;
+    }
+
+    static boolean createDirectories(String path){
+        Path dirPath = null;
+        try {
+            Path p = Paths.get(path);
+            dirPath = p.getParent();
+        } catch (InvalidPathException e) {
+            System.out.println("Wrong path to output file");
+        }
+
+        if (dirPath != null) {
             try {
-                write_line(hash, file_name, writer);
+                Files.createDirectories(dirPath);
             } catch (IOException e) {
-                e.printStackTrace();
-                // if we can not write in this file, probably we should throw the exception but we will just skip the file
-                // and notify user about missing but not very clear. May be it's good idea to make own Exception class but not yet
+                System.out.println("Access to output file is denied");
+                return false;
             }
         }
+        return true;
     }
 
     public static void main(String[] args) {
-        if (args.length != 2) {
-            System.out.println("Wrong number of arguments. Expected 2, got " + args.length);
+        if (!isCorrectArgs(args)) {
             return;
         }
+        if (!createDirectories(args[1])) {
+            return;
+        }
+
         try (
-                InputStream reader = new FileInputStream(args[0]);
+                BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(new FileInputStream(args[0]), StandardCharsets.UTF_8));
                 FileWriter writer = new FileWriter(args[1])
         ) {
-            Scanner sc = new Scanner(reader, "UTF-8");
-            while (sc.hasNext()) {
-                String name = sc.next();
-                read_one_file(name, writer);
+            String name;
+            while ((name = reader.readLine()) != null) {
+                try {
+                    readOneFile(Paths.get(name), writer);
+                } catch (InvalidPathException e) {
+                    writeLine(0, name, writer);
+                }
             }
         } catch (IOException e) {
-            e.printStackTrace();
+            System.out.println("Input or output file is not existed");
+        } catch (SecurityException e) {
+            System.out.println("Access to input or output file is denied");
         }
     }
 }
