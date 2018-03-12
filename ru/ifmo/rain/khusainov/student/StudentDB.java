@@ -8,12 +8,13 @@ import java.util.*;
 import java.util.function.BinaryOperator;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class StudentDB implements StudentGroupQuery {
 
-    private Comparator<Student> byNameComparator = Comparator
+    private static final Comparator<Student> BY_NAME_COMPARATOR = Comparator
             .comparing(Student::getLastName)
             .thenComparing(Comparator.comparing(Student::getFirstName))
             .thenComparing(Comparator.comparingInt(Student::getId));
@@ -46,70 +47,102 @@ public class StudentDB implements StudentGroupQuery {
 
     @Override
     public Set<String> getDistinctFirstNames(List<Student> students) {
-        return new TreeSet<>(getFirstNames(students));
+        return students.stream()
+                .map(Student::getFirstName)
+                .collect(Collectors.toCollection(TreeSet::new));
     }
 
     @Override
     public String getMinStudentFirstName(List<Student> students) {
         return students.stream()
                 .min(Student::compareTo)
-                .get() //throws NoSuchElementException but it's ok, what it should do else?
-                .getFirstName();
+                .map(Student::getFirstName)
+                .orElse("");
+    }
+
+    private Stream<Student> sortByComparator(Stream<Student> students, Comparator<Student> comparator) {
+        return students
+                .sorted(comparator);
     }
 
     private List<Student> sortByComparator(Collection<Student> students, Comparator<Student> comparator) {
-        return students.stream()
-                .sorted(comparator)
+        return sortByComparator(students.stream(), comparator)
                 .collect(Collectors.toList());
     }
 
     @Override
     public List<Student> sortStudentsById(Collection<Student> students) {
-        return sortByComparator(students, Student::compareTo);
+        return sortByComparator(students, Comparator.comparingInt(Student::getId));
     }
 
     @Override
     public List<Student> sortStudentsByName(Collection<Student> students) {
-        return sortByComparator(students, byNameComparator);
+        return sortByComparator(students, BY_NAME_COMPARATOR);
+    }
+
+    private Stream<Student> findStudentsByPredicate(Stream<Student> students, Predicate<Student> predicate) {
+        return students
+                .filter(predicate);
     }
 
     private List<Student> findStudentsByPredicate(Collection<Student> students, Predicate<Student> predicate) {
-        return students.stream()
-                .filter(predicate)
+        return findStudentsByPredicate(students.stream(), predicate)
+                .collect(Collectors.toList());
+    }
+
+    private Predicate<Student> getPredicateByFunction(Function<Student, String> function, String parameter) {
+        return student -> function.apply(student).equals(parameter);
+    }
+
+    private List<Student> findStudentsAndSort(Collection<Student> students, Function<Student, String> f, String value) {
+        return sortByComparator(
+                findStudentsByPredicate(students.stream(),
+                        getPredicateByFunction(f, value)),
+                BY_NAME_COMPARATOR)
                 .collect(Collectors.toList());
     }
 
     @Override
     public List<Student> findStudentsByFirstName(Collection<Student> students, String name) {
-        return findStudentsByPredicate(sortStudentsByName(students), s -> s.getFirstName().equals(name));
+        return findStudentsAndSort(students, Student::getFirstName, name);
     }
 
     @Override
     public List<Student> findStudentsByLastName(Collection<Student> students, String name) {
-        return findStudentsByPredicate(sortStudentsByName(students), s -> s.getLastName().equals(name));
+        return findStudentsAndSort(students, Student::getLastName, name);
     }
 
     @Override
     public List<Student> findStudentsByGroup(Collection<Student> students, String group) {
-        return findStudentsByPredicate(sortStudentsByName(students), s -> s.getGroup().equals(group));
+        return findStudentsAndSort(students, Student::getGroup, group);
     }
 
     @Override
     public Map<String, String> findStudentNamesByGroup(Collection<Student> students, String group) {
-        return findStudentsByGroup(students, group).stream()
-                .collect(Collectors.toMap(Student::getLastName,
-                        Student::getFirstName, BinaryOperator.minBy(Comparator.naturalOrder())));
+        return findStudentsByPredicate(students.stream(), getPredicateByFunction(Student::getGroup, group))
+                .collect(Collectors.toMap(
+                        Student::getLastName,
+                        Student::getFirstName,
+                        BinaryOperator.minBy(Comparator.naturalOrder())));
     }
 
-    private Stream<Map.Entry<String, List<Student>>> getListGroupStream(Collection<Student> students){
+    private Stream<Map.Entry<String, List<Student>>> getGroupStream(Collection<Student> students, Supplier<Map<String, List<Student>>> mapType) {
         return students.stream()
-                .collect(Collectors.groupingBy(Student::getGroup, TreeMap::new, Collectors.toList()))
+                .collect(Collectors.groupingBy(Student::getGroup, mapType, Collectors.toList()))
                 .entrySet()
                 .stream();
     }
 
-    private List<Group> getGroupsByComparator(Collection<Student> students, Comparator<Student> comparator) {
-        return getListGroupStream(students)
+    private Stream<Map.Entry<String, List<Student>>> getGroupStream(Collection<Student> students) {
+        return getGroupStream(students, HashMap::new);
+    }
+
+    private Stream<Map.Entry<String, List<Student>>> getSortedGroupStream(Collection<Student> students) {
+        return getGroupStream(students, TreeMap::new);
+    }
+
+    private List<Group> getSortedListOfGroupsByInnerComparator(Collection<Student> students, Comparator<Student> comparator) {
+        return getSortedGroupStream(students)
                 .peek((e) -> e.getValue().sort(comparator))
                 .map((e) -> new Group(e.getKey(), e.getValue()))
                 .collect(Collectors.toList());
@@ -117,31 +150,37 @@ public class StudentDB implements StudentGroupQuery {
 
     @Override
     public List<Group> getGroupsByName(Collection<Student> students) {
-        return getGroupsByComparator(students, byNameComparator);
+        return getSortedListOfGroupsByInnerComparator(students, BY_NAME_COMPARATOR);
     }
 
     @Override
     public List<Group> getGroupsById(Collection<Student> students) {
-        return getGroupsByComparator(students, Comparator.comparingInt(Student::getId));
+        return getSortedListOfGroupsByInnerComparator(students, Comparator.comparingInt(Student::getId));
     }
 
-    private String getGroupWithMaxValue(Collection<Student> students, Comparator<Map.Entry<String, List<Student>>> value) {
-        return getListGroupStream(students)
-                .max(value)
-                .get()
-                .getKey();
+    private String getGroupWithMaxByComparator(Collection<Student> students, Comparator<Map.Entry<String, List<Student>>> comparator) {
+        return getGroupStream(students)
+                .max(comparator
+                        .thenComparing(Map.Entry::getKey, Collections.reverseOrder(String::compareTo)))
+                .map(Map.Entry::getKey)
+                .orElse("");
     }
 
     @Override
     public String getLargestGroup(Collection<Student> students) {
-        return getGroupWithMaxValue(students, Comparator.comparingInt(e -> e.getValue().size()));
+        return getGroupWithMaxByComparator(students, Comparator.comparingInt(e -> e.getValue().size()));
     }
 
     @Override
     public String getLargestGroupFirstName(Collection<Student> students) {
-        return getGroupWithMaxValue(students, Comparator.comparingLong(e -> e.getValue().stream()
-                .map(Student::getFirstName)
-                .distinct()
-                .count()));
+        return getGroupWithMaxByComparator(
+                students,
+                Comparator.comparingLong(
+                        e -> e.getValue().stream()
+                                .map(Student::getFirstName)
+                                .distinct()
+                                .count()
+                )
+        );
     }
 }
