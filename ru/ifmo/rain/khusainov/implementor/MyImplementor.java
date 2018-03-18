@@ -2,23 +2,23 @@ package ru.ifmo.rain.khusainov.implementor;
 
 import info.kgeorgiy.java.advanced.implementor.Impler;
 import info.kgeorgiy.java.advanced.implementor.ImplerException;
-import info.kgeorgiy.java.advanced.implementor.Tester;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.Writer;
-import java.lang.annotation.Annotation;
 import java.lang.reflect.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.Set;
 
 public class MyImplementor implements Impler {
 
     private static final String TAB = "    ";
-    private static String CLASS_NAME;
+    private String CLASS_NAME;
 
-    private static Path getFilePath(Class<?> token, Path root) throws IOException {
+    private Path getFilePath(Class<?> token, Path root) throws IOException {
         if (token.getPackage() != null) {
             root = root.resolve(token.getPackage().getName().replace('.', File.separatorChar) + File.separatorChar);
         }
@@ -32,7 +32,7 @@ public class MyImplementor implements Impler {
             throw new ImplerException("Passed arguments are incorrect");
         }
 
-        if (token.isPrimitive() || token.isArray() || token == Enum.class || token.isAnnotation() || Modifier.isFinal(token.getModifiers())) {
+        if (token.isPrimitive() || token.isArray() || token == Enum.class || Modifier.isFinal(token.getModifiers())) {
             throw new ImplerException("Class token is incorrect");
         }
 
@@ -48,7 +48,7 @@ public class MyImplementor implements Impler {
 
     }
 
-    private static void writeClassFile(Class<?> token, Writer writer) throws IOException, ImplerException {
+    private void writeClassFile(Class<?> token, Writer writer) throws IOException, ImplerException {
         writePackage(token, writer);
         writeClassName(token, writer);
         writeConstructors(token, writer);
@@ -57,14 +57,13 @@ public class MyImplementor implements Impler {
     }
 
 
-    private static void writePackage(Class<?> token, Writer writer) throws IOException {
-//        writer.write(token.getPackage().toString() + ";\n\n");
+    private void writePackage(Class<?> token, Writer writer) throws IOException {
         if (token.getPackage() != null) {
             writer.write("package " + token.getPackage().getName() + ";\n\n");
         }
     }
 
-    private static void writeClassName(Class<?> token, Writer writer) throws IOException {
+    private void writeClassName(Class<?> token, Writer writer) throws IOException {
         writer.write(
                 Modifier.toString(token.getModifiers() & ~Modifier.ABSTRACT & ~Modifier.INTERFACE)
                         + " class "
@@ -73,38 +72,24 @@ public class MyImplementor implements Impler {
                         + token.getSimpleName()
                         + " {\n\n"
         );
-//        System.out.println(Modifier.toString(token.getModifiers() & ~Modifier.ABSTRACT & ~Modifier.INTERFACE)
-//                + " class "
-//                + CLASS_NAME
-//                + (token.isInterface() ? " implements " : " extends ")
-//                + token.getSimpleName()
-//                + " {\n\n"
-//        );
     }
 
-    private static void writeConstructors(Class<?> token, Writer writer) throws IOException, ImplerException {
+    private void writeConstructors(Class<?> token, Writer writer) throws IOException, ImplerException {
         boolean hasNonPrivateConstructors = false;
         for (Constructor<?> constructor : token.getDeclaredConstructors()) {
             if (Modifier.isPrivate(constructor.getModifiers())) {
                 continue;
             }
             hasNonPrivateConstructors = true;
-            writeAnnotations(constructor.getDeclaredAnnotations(), writer);
             writeExecutable(constructor, writer);
             writeConstructorImpl(constructor, writer);
         }
         if (!hasNonPrivateConstructors && !token.isInterface()) {
-            throw new ImplerException("Has no any non-private constructors");
+            throw new ImplerException("Has no non-private constructor");
         }
     }
 
-    private static void writeAnnotations(Annotation[] annotations, Writer writer) throws IOException {
-        for (Annotation annotation : annotations) {
-            writer.write(annotation.toString() + "\n");
-        }
-    }
-
-    private static void writeExecutable(Executable executable, Writer writer) throws IOException {
+    private void writeExecutable(Executable executable, Writer writer) throws IOException {
         writer.write(TAB
                 + Modifier.toString(executable.getModifiers() & ~Modifier.ABSTRACT & ~Modifier.TRANSIENT)
                 + " "
@@ -131,10 +116,13 @@ public class MyImplementor implements Impler {
         }
     }
 
-    private static void writeConstructorImpl(Constructor<?> constructor, Writer writer) throws IOException {
+    private void writeConstructorImpl(Constructor<?> constructor, Writer writer) throws IOException {
         writer.write("{\n" + TAB + TAB);
         writer.write("super(");
         Parameter[] parameters = constructor.getParameters();
+        if (parameters.length == 0) {
+            writer.write(");");
+        }
         for (int i = 0; i < parameters.length; i++) {
             writer.write(parameters[i].getName());
             writer.write((i == parameters.length - 1 ? ");" : ", "));
@@ -142,24 +130,81 @@ public class MyImplementor implements Impler {
         writer.write("\n" + TAB + "}\n\n");
     }
 
-    private static void writeMethods(Class<?> token, Writer writer) throws IOException {
-        for (Method method : token.getDeclaredMethods()) {
-            if (Modifier.isPrivate(method.getModifiers())) {
+    private void writeMethods(Class<?> token, Writer writer) throws IOException {
+        Set<MethodWrapper> set = new HashSet<>();
+
+        for (Method method : token.getMethods()) {
+            set.add(new MethodWrapper(method));
+        }
+
+        Class<?> ancestor = token;
+        while (ancestor != null && !ancestor.equals(Object.class)) {
+            for (Method method : ancestor.getDeclaredMethods()) {
+                set.add(new MethodWrapper(method));
+            }
+            ancestor = ancestor.getSuperclass();
+        }
+
+        for (MethodWrapper wrapper : set) {
+            if (!Modifier.isAbstract(wrapper.getMethod().getModifiers())) {
                 continue;
             }
-            writeAnnotations(method.getDeclaredAnnotations(), writer);
-            writeExecutable(method, writer);
-            writeMethodImpl(method, writer);
+            writeExecutable(wrapper.getMethod(), writer);
+            writeMethodImpl(wrapper.getMethod(), writer);
         }
     }
 
-    private static void writeMethodImpl(Method method, Writer writer) throws IOException {
+    private class MethodWrapper {
+        private final Method method;
+
+        Method getMethod() {
+            return method;
+        }
+
+        MethodWrapper(Method method) {
+            this.method = method;
+        }
+
+        @Override
+        public int hashCode() {
+            Parameter[] parameters = method.getParameters();
+            int hashCode = Integer.hashCode(parameters.length) * 43 + method.getName().hashCode();
+            for (Parameter parameter : parameters) {
+                hashCode = hashCode * 43 + parameter.toString().hashCode();
+            }
+            return hashCode;
+        }
+
+        private boolean parametersEquals(Parameter[] a, Parameter[] b) {
+            if (a.length != b.length) {
+                return false;
+            }
+            for (int i = 0; i < a.length; i++) {
+                if (!a[i].toString().equals(b[i].toString())) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (!(obj instanceof MethodWrapper)) {
+                return false;
+            }
+            MethodWrapper that = (MethodWrapper) obj;
+            return this.method.getName().equals(that.method.getName()) && parametersEquals(method.getParameters(), that.method.getParameters());
+        }
+    }
+
+
+    private void writeMethodImpl(Method method, Writer writer) throws IOException {
         writer.write("{\n" + TAB + TAB);
         writer.write("return" + getDefaultReturnType(method.getReturnType()) + ";");
         writer.write("\n" + TAB + "}\n\n");
     }
 
-    private static String getDefaultReturnType(Class<?> type) {
+    private String getDefaultReturnType(Class<?> type) {
         if (type.equals(void.class)) {
             return "";
         } else if (type.equals(boolean.class)) {
@@ -168,22 +213,6 @@ public class MyImplementor implements Impler {
             return " 0";
         } else {
             return " null";
-        }
-    }
-
-    public static class Test {
-        void f(int a, Integer b, Tester[] c) {
-            System.out.println("kek");
-        }
-
-        public static void main(String[] args) {
-            System.out.println(Test.class.getDeclaredConstructors().length);
-            for (Method method : Test.class.getDeclaredMethods()) {
-                System.out.println(method.getName() + ":\n");
-                //            for(Parameter parameter: method.getParameters()){
-                //                System.out.println(parameter.getType().getCanonicalName() +" " + parameter);
-                //            }
-            }
         }
     }
 }
