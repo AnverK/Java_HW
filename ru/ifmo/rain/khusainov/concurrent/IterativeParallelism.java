@@ -1,6 +1,7 @@
 package ru.ifmo.rain.khusainov.concurrent;
 
 import info.kgeorgiy.java.advanced.concurrent.ListIP;
+import info.kgeorgiy.java.advanced.mapper.ParallelMapper;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -13,6 +14,16 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 public class IterativeParallelism implements ListIP {
+    private final ParallelMapper mapper;
+
+    public IterativeParallelism(ParallelMapper mapper) {
+        this.mapper = mapper;
+    }
+
+    public IterativeParallelism() {
+        mapper = null;
+    }
+
     private static <T> List<Stream<? extends T>> split(final int threads, final List<? extends T> list) {
         final int n = Math.min(threads, list.size());
         final int len = list.size() / n;
@@ -43,17 +54,24 @@ public class IterativeParallelism implements ListIP {
         }
     }
 
-    private static <T, R> R baseSupply(int threads, final List<? extends T> list,
-                                       final Function<Stream<? extends T>, ? extends R> function,
-                                       final Function<? super Stream<R>, R> resultCollector) throws InterruptedException {
+    private <T, R> R baseSupply(int threads, final List<? extends T> list,
+                                final Function<Stream<? extends T>, ? extends R> function,
+                                final Function<? super Stream<R>, R> resultCollector) throws InterruptedException {
+        final List<R> result;
         final List<Stream<? extends T>> subStreams = split(threads, list);
-        final List<R> result = new ArrayList<>(Collections.nCopies(subStreams.size(), null));
-        final List<Thread> myThreads = IntStream.range(0, subStreams.size())
-                .mapToObj(threadPosition ->
-                        new Thread(() -> result.set(threadPosition, function.apply(subStreams.get(threadPosition)))))
-                .collect(Collectors.toList());
-        myThreads.forEach(Thread::start);
-        joinThreads(myThreads);
+        if (mapper != null) {
+            result = mapper.map(function, subStreams);
+        } else {
+
+            result = new ArrayList<>(Collections.nCopies(subStreams.size(), null));
+            final List<Thread> myThreads = IntStream.range(0, subStreams.size())
+                    .mapToObj(threadPosition ->
+                            new Thread(() -> result.set(threadPosition, function.apply(subStreams.get(threadPosition)))))
+                    .collect(Collectors.toList());
+            myThreads.forEach(Thread::start);
+            joinThreads(myThreads);
+        }
+
         return resultCollector.apply(result.stream());
     }
 
