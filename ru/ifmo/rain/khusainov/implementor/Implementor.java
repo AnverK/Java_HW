@@ -3,7 +3,6 @@ package ru.ifmo.rain.khusainov.implementor;
 import info.kgeorgiy.java.advanced.implementor.Impler;
 import info.kgeorgiy.java.advanced.implementor.ImplerException;
 import info.kgeorgiy.java.advanced.implementor.JarImpler;
-import info.kgeorgiy.java.advanced.implementor.standard.basic.Accessible;
 
 import javax.tools.JavaCompiler;
 import javax.tools.ToolProvider;
@@ -11,7 +10,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.Writer;
 import java.lang.reflect.*;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Arrays;
@@ -22,12 +20,23 @@ import java.util.jar.JarOutputStream;
 import java.util.jar.Manifest;
 import java.util.zip.ZipEntry;
 
+/**
+ * A class that implements classes and interfaces.
+ */
 public class Implementor implements Impler, JarImpler {
+
 
     /**
      * Default gap called 'tab' represented by four spaces
      */
     private static final String TAB = "    ";
+
+    /**
+     * Create instance of {@link Implementor}
+     */
+    public Implementor() {
+
+    }
 
     /**
      * Returns the {@link java.nio.file.Path} to the implementation of <tt>token</tt> relative from the <tt>root</tt>.
@@ -82,7 +91,7 @@ public class Implementor implements Impler, JarImpler {
      * @return the name of implementation of <tt>token</tt>
      */
     private static String getImplClassName(Class<?> token) {
-        return token.getSimpleName() + "Impl";
+        return toUnicode(token.getSimpleName()) + "Impl";
     }
 
     /**
@@ -108,7 +117,7 @@ public class Implementor implements Impler, JarImpler {
         }
 
         try (
-                Writer writer = Files.newBufferedWriter(createJavaDirectory(token, root), StandardCharsets.UTF_8)
+                Writer writer = Files.newBufferedWriter(createJavaDirectory(token, root))
         ) {
             writeClassFile(token, writer);
         } catch (IOException e) {
@@ -143,8 +152,28 @@ public class Implementor implements Impler, JarImpler {
      */
     private void writePackage(Class<?> token, Writer writer) throws IOException {
         if (token.getPackage() != null) {
-            writer.write("package " + token.getPackage().getName() + ";\n\n");
+            writer.write("package " + toUnicode(token.getPackage().getName()) + ";\n\n");
         }
+    }
+
+    /**
+     * Represent <tt>in</tt>'s chars to <tt>unicode escape</tt>.
+     * If char code is not less than <tt>128</tt>. Otherwise char is not changed.
+     *
+     * @param in input {@link String}
+     * @return string with <tt>unicode escapes</tt>
+     */
+    private static String toUnicode(String in) {
+        StringBuilder b = new StringBuilder();
+
+        for (char c : in.toCharArray()) {
+            if (c >= 128)
+                b.append("\\u").append(String.format("%04X", (int) c));
+            else
+                b.append(c);
+        }
+
+        return b.toString();
     }
 
     /**
@@ -163,7 +192,7 @@ public class Implementor implements Impler, JarImpler {
                         + " class "
                         + getImplClassName(token)
                         + (token.isInterface() ? " implements " : " extends ")
-                        + token.getSimpleName()
+                        + toUnicode(token.getSimpleName())
                         + " {\n\n"
         );
     }
@@ -208,20 +237,20 @@ public class Implementor implements Impler, JarImpler {
         writer.write(TAB
                 + Modifier.toString(executable.getModifiers() & ~Modifier.ABSTRACT & ~Modifier.TRANSIENT)
                 + " "
-                + (executable instanceof Constructor ? "" : ((Method) executable).getReturnType().getCanonicalName() + " ")
-                + (executable instanceof Constructor ? getImplClassName(token) : executable.getName())
+                + (executable instanceof Constructor ? "" : toUnicode(((Method) executable).getReturnType().getCanonicalName()) + " ")
+                + (executable instanceof Constructor ? getImplClassName(token) : toUnicode(executable.getName()))
                 + "("
         );
 
         Parameter[] parameters = executable.getParameters();
         for (int i = 0; i < parameters.length; i++) {
-            writer.write((i == 0 ? "" : ", ") + parameters[i].getType().getCanonicalName() + " " + parameters[i].getName());
+            writer.write((i == 0 ? "" : ", ") + toUnicode(parameters[i].getType().getCanonicalName()) + " " + toUnicode(parameters[i].getName()));
         }
         writer.write(")");
 
         Class<?> exceptions[] = executable.getExceptionTypes();
         for (int i = 0; i < exceptions.length; i++) {
-            writer.write((i == 0 ? " throws " : ", ") + exceptions[i].getCanonicalName());
+            writer.write((i == 0 ? " throws " : ", ") + toUnicode(exceptions[i].getCanonicalName()));
         }
     }
 
@@ -242,7 +271,7 @@ public class Implementor implements Impler, JarImpler {
             writer.write(");");
         }
         for (int i = 0; i < parameters.length; i++) {
-            writer.write(parameters[i].getName());
+            writer.write(toUnicode(parameters[i].getName()));
             writer.write((i == parameters.length - 1 ? ");" : ", "));
         }
         writer.write("\n" + TAB + "}\n\n");
@@ -420,12 +449,8 @@ public class Implementor implements Impler, JarImpler {
         Attributes attributes = manifest.getMainAttributes();
         attributes.put(Attributes.Name.MANIFEST_VERSION, "1.0");
         try (JarOutputStream writer = new JarOutputStream(Files.newOutputStream(jarFile), manifest)) {
-            try {
-                writer.putNextEntry(new ZipEntry(token.getName().replace('.', '/') + "Impl.class"));
-                Files.copy(getFilePath(token, root, false), writer);
-            } catch (IOException e) {
-                throw new ImplerException("Unable to write to JAR file", e);
-            }
+            writer.putNextEntry(new ZipEntry(token.getName().replace('.', '/') + "Impl.class"));
+            Files.copy(getFilePath(token, root, false), writer);
         } catch (IOException e) {
             throw new ImplerException("Unable to create JAR file", e);
         }
@@ -444,8 +469,7 @@ public class Implementor implements Impler, JarImpler {
     @Override
     public void implementJar(Class<?> token, Path jarFile) throws ImplerException {
         Path tmpDirectory = Paths.get("tmp");
-        Implementor implementor = new Implementor();
-        implementor.implement(token, tmpDirectory);
+        implement(token, tmpDirectory);
         compileClass(tmpDirectory, getFilePath(token, tmpDirectory, true));
         writeJarFile(token, tmpDirectory, jarFile);
         try {
@@ -456,7 +480,7 @@ public class Implementor implements Impler, JarImpler {
     }
 
     /**
-     * Recursively deletes file or directory by <tt>path</tt>
+     * Recursively deletes file or directory by <tt>path</tt>.
      *
      * @param path path to file or directory for deleting
      * @throws IOException if an I/O error occurs
@@ -469,10 +493,17 @@ public class Implementor implements Impler, JarImpler {
      * Class for deleting directories recursively
      */
     private static class Deleter extends SimpleFileVisitor<Path> {
+
         /**
-         * Deletes file by {@link Path} <tt>file</tt>.
+         * Initializes a new instance of this class.
+         */
+        public Deleter() {
+        }
+
+        /**
+         * Deletes file by {@link Path}
          *
-         * @param file       current file in file tree
+         * @param file       current file in file tree which should be deleted
          * @param attributes attributes of <tt>file</tt>
          * @return next file in file tree
          * @throws IOException if an I/O error occurs
@@ -485,17 +516,17 @@ public class Implementor implements Impler, JarImpler {
         }
 
         /**
-         * Deletes directory by {@link Path} <tt>dir</tt>.
+         * Deletes directory by {@link Path}
          *
-         * @param dir       current dir in file tree
+         * @param dir       current directory in file tree which should be deleted
          * @param exception {@code null} if the iteration of the directory completes without
          *                  an error; otherwise the I/O exception that caused the iteration
          *                  of the directory to complete prematurely
-         * @throws IOException if an I/O error occurs
          * @return {@link FileVisitResult#CONTINUE
          * CONTINUE} if the directory iteration completes without an I/O exception;
          * otherwise this method re-throws the I/O exception that caused the iteration
          * of the directory to terminate prematurely.
+         * @throws IOException if an I/O error occurs
          * @see FileVisitResult#CONTINUE
          */
         @Override
@@ -506,32 +537,43 @@ public class Implementor implements Impler, JarImpler {
     }
 
 
-    public static void main(String[] args) throws ImplerException {
-        Path root = Paths.get("./tmp");
-        Implementor myImplementor = new Implementor();
-        myImplementor.implementJar(Accessible.class, root.resolve(Accessible.class.getName() + ".jar"));
-//        if (args == null || (args.length != 2 && args.length != 3)) {
-//            System.out.println("Two or three arguments expected");
-//            return;
-//        }
-//        for (String arg : args) {
-//            if (arg == null) {
-//                System.out.println("All arguments must be non-null");
-//            }
-//        }
-//        Implementor implementor = new Implementor();
-//        try {
-//            if (args.length == 2) {
-//                implementor.implement(Class.forName(args[0]), Paths.get(args[1]));
-//            } else {
-//                implementor.implementJar(Class.forName(args[1]), Paths.get(args[2]));
-//            }
-//        } catch (InvalidPathException e) {
-//            System.out.println("Incorrect path to root: " + e.getMessage());
-//        } catch (ClassNotFoundException e) {
-//            System.out.println("Incorrect class name: " + e.getMessage());
-//        } catch (ImplerException e) {
-//            System.out.println("An error occurred during implementation: " + e.getMessage());
-//        }
+    /**
+     * Entry point of the program.
+     * <p>
+     * Usage:
+     * <ul>
+     * <li>{@code java -jar Implementor.jar -jar class-to-implement path-to-jar}</li>
+     * <li>{@code java -jar Implementor.jar class-to-implement path-to-class}</li>
+     * </ul>
+     *
+     * @param args command line arguments.
+     * @see Implementor
+     */
+    public static void main(String[] args) {
+        if (args == null || (args.length != 2 && args.length != 3)) {
+            System.out.println("Wrong amount of arguments. Expected 2 or 3.");
+            return;
+        }
+        for (String arg : args) {
+            if (arg == null) {
+                System.out.println("Not-null arguments were expected");
+                return;
+            }
+        }
+
+        try {
+            Implementor implementor = new Implementor();
+            if (args[0].equals("-jar")) {
+                implementor.implementJar(Class.forName(args[1]), Paths.get(args[2]));
+            } else {
+                implementor.implement(Class.forName(args[0]), Paths.get(args[1]));
+            }
+        } catch (InvalidPathException e) {
+            System.out.println("Incorrect path to root in input: " + e.getMessage());
+        } catch (ClassNotFoundException e) {
+            System.out.println("Incorrect class name in input: " + e.getMessage());
+        } catch (ImplerException e) {
+            System.out.println("Exception was thrown during the implementation: " + e.getMessage());
+        }
     }
 }

@@ -27,24 +27,32 @@ public class IterativeParallelism implements ListIP {
     }
 
     private static void joinThreads(final List<Thread> threads) throws InterruptedException {
+        InterruptedException exception = null;
         for (final Thread thread : threads) {
-            thread.join();
+            try {
+                thread.join();
+            } catch (InterruptedException e) {
+                if (exception == null) {
+                    exception = new InterruptedException("One or more threads were not joined");
+                }
+                exception.addSuppressed(e);
+            }
+        }
+        if (exception != null) {
+            throw exception;
         }
     }
 
-    private static void addAndStartThread(final List<Thread> threads, final Thread newThread) {
-        threads.add(newThread);
-        newThread.start();
-    }
-
-    private static <T, R> R baseSupply(final int threads, final List<? extends T> list,
+    private static <T, R> R baseSupply(int threads, final List<? extends T> list,
                                        final Function<Stream<? extends T>, ? extends R> function,
                                        final Function<? super Stream<R>, R> resultCollector) throws InterruptedException {
         final List<Stream<? extends T>> subStreams = split(threads, list);
         final List<R> result = new ArrayList<>(Collections.nCopies(subStreams.size(), null));
-        final List<Thread> myThreads = new ArrayList<>();
-        IntStream.range(0, subStreams.size()).forEach(threadPosition -> addAndStartThread(myThreads,
-                new Thread(() -> result.set(threadPosition, function.apply(subStreams.get(threadPosition))))));
+        final List<Thread> myThreads = IntStream.range(0, subStreams.size())
+                .mapToObj(threadPosition ->
+                        new Thread(() -> result.set(threadPosition, function.apply(subStreams.get(threadPosition)))))
+                .collect(Collectors.toList());
+        myThreads.forEach(Thread::start);
         joinThreads(myThreads);
         return resultCollector.apply(result.stream());
     }
